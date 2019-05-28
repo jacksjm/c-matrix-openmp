@@ -1,13 +1,13 @@
+#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
 #include "toolsv2.h"
 #include "matriz.h"
-#include "matriz-operacoes-threads.h"
+#include "matriz-operacoes-openmp.h"
 
 int **mat_a = NULL;
 int **mat_b = NULL;
@@ -19,27 +19,6 @@ int N, M, La, Lb;
 matriz_bloco_t **Vsubmat_a = NULL;
 matriz_bloco_t **Vsubmat_b = NULL;
 matriz_bloco_t **Vsubmat_c = NULL;
-
-typedef struct {
-      int tid;
-      int ntasks;
-} param_t;
-
-// %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-void *execMultThread (void *arg) {
-  param_t *p = (param_t *) arg;
-
-  multiplicarIKJThread(mat_a,mat_b,mat_c_thread, N, La, M, Lb, p->tid, p->ntasks);
-  return NULL;
-}
-
-void *execMultBlocoThread (void *arg) {
-  param_t *p = (param_t *) arg;
-
-  multiplicar_submatriz (Vsubmat_a[p->tid], Vsubmat_b[p->tid], Vsubmat_c[p->tid]);
-  return NULL;
-}
 
 int main(int argc, char *argv[]) {
     
@@ -55,7 +34,6 @@ int main(int argc, char *argv[]) {
     int nLimit = 10;
     int nBlocos = 20;
     int nMulti = 0;
-    int nJoin = 0;
 	double nStartTime, nEndTime;
     double nTimeIKJ = 0.0;
     double nTimeIKJThread = 0.0;
@@ -63,8 +41,6 @@ int main(int argc, char *argv[]) {
     double nTimeBlocoThread = 0.0;
     double nMidIKJ, nMidBloco;
     double nMidIKJThread, nMidBlocoThread;
-    param_t *args;
-    pthread_t *threads;
 
 	// %%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -81,8 +57,6 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 	nMaxThread = atoi(argv[3]);
-    threads = (pthread_t *) malloc(nMaxThread * sizeof(pthread_t));
-    args = (param_t *) malloc(nMaxThread * sizeof(param_t));
     
     // matriz_a N (linha) x La (coluna)
 	extrai_parametros_matriz(fmat_a, &N, &La, &vet_line, &nr_line);
@@ -167,35 +141,28 @@ int main(int argc, char *argv[]) {
 
     // %%%%%%%%%%%%%%%%%%%%%%%% BEGIN %%%%%%%%%%%%%%%%%%%%%%%%
     // Multiplicação MultiThread
-    printf("Inicio Multiplicação MultiThread.... Execuções: ");
+    printf("Inicio Multiplicação OpenMP.... Execuções: ");
     for(nCnt=0;nCnt<nLimit;nCnt++){
         printf("%d ", nCnt);
         fflush(stdout);
         zerar_matriz(mat_c_thread, N, M);
         nStartTime = wtime();
 
-        for (int i = 0; i < nMaxThread; i++)
-        {
-            args[i].tid = i;
-            args[i].ntasks = nMaxThread;
-            pthread_create(&threads[i], NULL, execMultThread, (void *) (args+i));
-        }
-        for (int i = 0; i < nMaxThread; i++)
-        {
-            pthread_join(threads[i], NULL);
-        }
+        multiplicarIKJOpenMP(mat_a,mat_b,mat_c_thread, N, La, M, Lb,  nMaxThread);
+
         nEndTime = wtime();
 
         nTimeIKJThread += ( nEndTime - nStartTime );
     }
     printf("\n");
-    fmat_c= fopen("multiIKJThread.map-result","w");
+    
+    fmat_c= fopen("multiIKJOpenMP.map-result","w");
 	fileout_matriz(mat_c_thread, N, M, fmat_c);
     // %%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%
-
+    
     // %%%%%%%%%%%%%%%%%%%%%%%% BEGIN %%%%%%%%%%%%%%%%%%%%%%%%
     // Multiplicação MultiThread em Bloco
-    printf("Inicio Multiplicação MultiThread em Bloco.... Execuções: ");
+    printf("Inicio Multiplicação OpenMP em Bloco.... Execuções: ");
     for(nCnt=0;nCnt<nLimit;nCnt++){
         printf("%d ", nCnt);
         fflush(stdout);
@@ -207,23 +174,12 @@ int main(int argc, char *argv[]) {
 
 	    zerar_matriz(mat_c_bloco_thread, N, M);
         nMulti = 0;
-        while (nMulti < nBlocos){
-            for (int i = 0; i < nMaxThread; i++){
-                if (nMulti < nBlocos){
-                    args[i].tid = nMulti;
-                    args[i].ntasks = nMaxThread;
-                    pthread_create(&threads[i], NULL, execMultBlocoThread, (void *) (args+i));
-                    nJoin++;
-                }
-                nMulti++;
-            }
-            for (int i = 0; i < nJoin; i++)
-            {
-                pthread_join(threads[i], NULL);
-            }
-            nJoin=0;
-        }
 
+        #pragma omp parallel for num_threads(nMaxThread)
+            for (int i = 0; i < nBlocos; i++){
+                multiplicar_submatriz (Vsubmat_a[i], Vsubmat_b[i], Vsubmat_c[i]);
+            }
+    
         for( nMulti = 0; nMulti < nBlocos; nMulti ++)
             somarIJ(mat_c_bloco_thread,Vsubmat_c[nMulti]->matriz,mat_c_bloco_thread, N, N, N, N);
 
@@ -238,33 +194,33 @@ int main(int argc, char *argv[]) {
 
     }
     printf("\n");
-    fmat_c= fopen("multiBlocoThread.map-result","w");
+    fmat_c= fopen("multiBlocoOpenMP.map-result","w");
 	fileout_matriz(mat_c_bloco_thread, N, M, fmat_c);
     // %%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%
-
+    
     printf("\n\n");
     // Comparar resultados e tempos
     printf("\tCompara Matriz Sequencial x Matriz Bloco\n");
     comparar_matriz(mat_c,mat_c_bloco,N,M);
     printf("\n");
-    printf("\tCompara Matriz Sequencial x Matriz Sequencial Thread\n");
+    printf("\tCompara Matriz Sequencial x Matriz Sequencial OpenMP\n");
     comparar_matriz(mat_c,mat_c_thread,N,M);
     printf("\n");
-    printf("\tCompara Matriz Bloco x Matriz Bloco Thread\n");
+    printf("\tCompara Matriz Bloco x Matriz Bloco OpenMP\n");
     comparar_matriz(mat_c_bloco,mat_c_bloco_thread,N,M);
     printf("\n");
 
     nMidIKJ = nTimeIKJ/nLimit;
     printf("\tTempo Médio Multiplicação IKJ: %f\n", nMidIKJ);
     nMidIKJThread = nTimeIKJThread/nLimit;
-    printf("\tTempo Médio Multiplicação IKJ Thread: %f\n", nMidIKJThread);
+    printf("\tTempo Médio Multiplicação IKJ OpenMP: %f\n", nMidIKJThread);
 
     printf("\n");
 
     nMidBloco = nTimeBloco/nLimit;
     printf("\tTempo Médio Multiplicação Bloco: %f\n", nMidBloco);
     nMidBlocoThread = nTimeBlocoThread/nLimit;
-    printf("\tTempo Médio Multiplicação Bloco Thread: %f\n", nMidBlocoThread);
+    printf("\tTempo Médio Multiplicação Bloco OpenMP: %f\n", nMidBlocoThread);
 
     printf("\n");
     printf("\tSpeedUp IKJ: %f\n", nMidIKJ/nMidIKJThread);
