@@ -1,5 +1,5 @@
-#include "matriz-operacoes-threads.h"
-
+#include <omp.h>
+#include "matriz-operacoes-openmp.h"
 
 /*
 function somarIJ
@@ -64,8 +64,8 @@ int multiplicarIKJ (int **aMatrizA, int **aMatrizB, int **aMatrizC, int nLinA, i
   return 0;
 }
 /*
-function multiplicarIKJThread
-Realiza a Multiplicação de duas Matrizes em Thread
+function multiplicarIKJOpenMP
+Realiza a Multiplicação de duas Matrizes em Thread OpenMP
 Ordem: Linha Matriz A > Coluna A\Linha B > Coluna Matriz B
 
 @return int, Sempre 0
@@ -78,7 +78,7 @@ Ordem: Linha Matriz A > Coluna A\Linha B > Coluna Matriz B
 @param nColB, int, Numero de Colunas da Matriz B
 @param nLinB, int, Numero de Linhas da Matriz B
 */
-int multiplicarIKJThread (int **aMatrizA, int **aMatrizB, int **aMatrizC, int nLinA, int nColA, int nColB, int nLinB, int nThread, int nMaxThread) {
+int multiplicarIKJOpenMP (int **aMatrizA, int **aMatrizB, int **aMatrizC, int nLinA, int nColA, int nColB, int nLinB, int nMaxThread) {
 
   // Valida se Matriz foi alocada
   vldAlloc(aMatrizA, aMatrizB, aMatrizC);
@@ -86,13 +86,15 @@ int multiplicarIKJThread (int **aMatrizA, int **aMatrizB, int **aMatrizC, int nL
   // Valida se estrutura da Matriz foi respeitada
   vldMatriz(nColA,nLinB,nLinA,nColB,1);
   
-  // Percorre Linha de A
-  for (int nCntLA=nThread; nCntLA < nLinA; nCntLA += nMaxThread )
-    // Percorre Coluna A = Linha B
-    for (int nCntLX=0; nCntLX < nColA; nCntLX++ )
-      // Percorre Coluna de B
-      for (int nCntCB=0; nCntCB < nColB; nCntCB++ )
-        aMatrizC[nCntLA][nCntCB] += aMatrizA[nCntLA][nCntLX] * aMatrizB[nCntLX][nCntCB];
+  // Inicia paralelismo
+  #pragma omp parallel for num_threads(nMaxThread) shared (nLinA, nColA,nColB,aMatrizA,aMatrizB,aMatrizC)
+    // Percorre Linha de A
+    for (int nCntLA=0; nCntLA < nLinA; nCntLA ++ )
+      // Percorre Coluna A = Linha B
+      for (int nCntLX=0; nCntLX < nColA; nCntLX++ )
+        // Percorre Coluna de B
+        for (int nCntCB=0; nCntCB < nColB; nCntCB++ )
+          aMatrizC[nCntLA][nCntCB] += aMatrizA[nCntLA][nCntLX] * aMatrizB[nCntLX][nCntCB];
 
   return 0;
 }
